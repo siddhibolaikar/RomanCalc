@@ -106,10 +106,12 @@ def tree_to_str(node):
 def tree_to_dict(node):
     """JSON-friendly tree for a frontend parse-tree viewer."""
     if isinstance(node, NumeralNode):
-        return {"type": "Numeral", "roman": node.original_roman, "value": node.decimal_value}
+        return {"type": "Numeral", "roman": node.original_roman,
+                "value": node.decimal_value, "val": node.val}
     return {
         "type": "BinaryOp",
         "op": node.op,
+        "val": node.val,   # synthesized attribute (None until semantic analysis runs)
         "left": tree_to_dict(node.left),
         "right": tree_to_dict(node.right),
     }

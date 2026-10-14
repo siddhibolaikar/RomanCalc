@@ -96,6 +96,10 @@ class Token:
         val = f", value={self.value}" if self.value is not None else ""
         return f"Token({self.type}, '{self.lexeme}'{val}, pos={self.position})"
 
+    def to_dict(self):
+        return {"type": self.type, "lexeme": self.lexeme,
+                "value": self.value, "position": self.position}
+
 
 def tokenize(source):
     """Scans `source` into a list of Tokens, ending with an EOF token.
