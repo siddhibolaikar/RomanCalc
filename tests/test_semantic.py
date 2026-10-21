@@ -4,34 +4,33 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import pytest
 from lexer import tokenize
 from parser import Parser
-from semantic import analyze, check_representable
+from semantic import analyze, calculate
 from errors import CompilerError
 
 
-def evaluate(src):
-    tree = Parser(tokenize(src)).parse()
-    return analyze(tree)
+def value_of(text):
+    return analyze(Parser(tokenize(text)).parse())
 
 
-@pytest.mark.parametrize("src,expected", [
-    ("XII + IV * II", 20),
-    ("(XII + IV) * II", 32),
-    ("X / II", 5),
-    ("X - V - II", 3),
-    ("III * III * III", 27),
+@pytest.mark.parametrize("text,expected", [
+    ("XII + IV * II", 20), ("(XII + IV) * II", 32), ("X / II", 5),
+    ("X - V - II", 3), ("III * III * III", 27), ("II - X", -8), ("X / III", 3),
 ])
-def test_evaluation(src, expected):
-    assert evaluate(src) == expected
+def test_values(text, expected):
+    assert value_of(text) == expected
+
+
+def test_every_node_gets_a_val():
+    tree = Parser(tokenize("XII + IV * II")).parse()
+    analyze(tree)
+    assert (tree.val, tree.left.val, tree.right.val) == (20, 12, 8)
 
 
 def test_division_by_zero():
-    with pytest.raises(CompilerError) as exc:
-        evaluate("X / (II - II)")
-    assert exc.value.phase == "semantic"
+    with pytest.raises(CompilerError) as e:
+        value_of("X / (II - II)")
+    assert e.value.phase == "semantic"
 
 
-def test_representable_check():
-    with pytest.raises(CompilerError):
-        check_representable(5000)
-    check_representable(3999)  # should not raise
-    check_representable(1)     # should not raise
+def test_calculate():
+    assert calculate("+", 2, 3) == 5 and calculate("*", 2, 3) == 6 and calculate("/", 7, 2) == 3

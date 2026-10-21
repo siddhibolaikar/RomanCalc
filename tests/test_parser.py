@@ -3,38 +3,32 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
 from lexer import tokenize
-from parser import Parser, tree_to_str
+from parser import Parser, tree_to_str, tree_lines
 from errors import CompilerError
 
 
-def parse(src):
-    return Parser(tokenize(src)).parse()
+def parse(text):
+    return Parser(tokenize(text)).parse()
 
 
-def test_precedence_multiplication_binds_tighter():
-    tree = parse("XII + IV * II")
-    assert tree_to_str(tree) == "(XII + (IV * II))"
+def test_multiplication_binds_tighter():
+    assert tree_to_str(parse("XII + IV * II")) == "(XII + (IV * II))"
 
 
-def test_parentheses_override_precedence():
-    tree = parse("(XII + IV) * II")
-    assert tree_to_str(tree) == "((XII + IV) * II)"
+def test_brackets_change_the_grouping():
+    assert tree_to_str(parse("(XII + IV) * II")) == "((XII + IV) * II)"
 
 
-def test_left_associativity():
-    tree = parse("X - V - II")
-    assert tree_to_str(tree) == "((X - V) - II)"
+def test_subtraction_goes_left_to_right():
+    assert tree_to_str(parse("X - V - II")) == "((X - V) - II)"
 
 
-@pytest.mark.parametrize("src", [
-    "XII +",       # trailing operator
-    "+ XII",       # leading operator
-    "(XII + IV",   # unbalanced parens
-    "()",          # empty parens
-    "XII IV",      # missing operator between numerals
-    "* XII",       # operator with no left operand
-])
-def test_syntax_errors(src):
-    with pytest.raises(CompilerError) as exc:
-        parse(src)
-    assert exc.value.phase == "syntax"
+def test_tree_lines_one_node_per_line():
+    assert tree_lines(parse("XII + IV")) == ["+", "    XII", "    IV"]
+
+
+@pytest.mark.parametrize("text", ["XII +", "+ XII", "(XII + IV", "()", "XII IV", "* XII", "XII + IV)", ""])
+def test_syntax_errors(text):
+    with pytest.raises(CompilerError) as e:
+        parse(text)
+    assert e.value.phase == "syntax"

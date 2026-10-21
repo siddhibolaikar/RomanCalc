@@ -2,33 +2,47 @@ import sys, os, re
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import pytest
-from pipeline import run_pipeline
+from main import compile_source
 from ai_advisor import explain_error
+from errors import CompilerError
 
 
 @pytest.fixture(autouse=True)
 def no_api_key(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)   # force offline fallback
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)     # force the built-in rules
 
 
-@pytest.mark.parametrize("src,must_contain", [
+def error_for(text):
+    stages, asm = compile_source(text)
+    assert asm is None                                          # a failed compile has no assembly
+    return stages
+
+
+@pytest.mark.parametrize("text,must_contain", [
     ("IIII + I", "IV"),
-    ("VX - II", "subtractive"),
+    ("VX - II", "not allowed"),
     ("VV", "never be repeated"),
+    ("MMMM", "3999"),
     ("XII + 5", "not allowed"),
     ("(X + V", "closed"),
     ("X V", "operator"),
+    ("X + V)", "without a matching"),
+    ("X /", "number"),
     ("X / (II - II)", "zero"),
 ])
-def test_offline_error_explanations(src, must_contain):
-    err = run_pipeline(src)["error"]
-    out = explain_error(err, src)
-    assert out["source"] == "offline" and must_contain in out["text"]
+def test_error_explanations(text, must_contain):
+    stages = error_for(text)
+    assert stages[-1][0] == "AI EXPLANATION (built-in rules)"
+    assert must_contain in stages[-1][2][0]
 
 
-def test_core_compiler_never_imports_ai_layer():
-    # The AI layer must stay advisory: no compiler module may depend on it.
-    src_dir = os.path.join(os.path.dirname(__file__), "..", "src")
-    for name in ["lexer", "parser", "semantic", "codegen", "optimizer", "pipeline", "ops"]:
-        text = open(os.path.join(src_dir, name + ".py")).read()
+def test_explain_error_returns_text_and_source():
+    text, who = explain_error(CompilerError("lexical", "bad", 0, "IIII"), "IIII")
+    assert "IV" in text and who == "built-in rules"
+
+
+def test_compiler_phases_never_import_the_ai_explainer():
+    src = os.path.join(os.path.dirname(__file__), "..", "src")
+    for name in ["lexer", "parser", "semantic", "codegen", "optimizer"]:
+        text = open(os.path.join(src, name + ".py")).read()
         assert not re.search(r"^\s*(import|from)\s+ai_advisor", text, re.M), name

@@ -6,38 +6,36 @@ from lexer import tokenize, roman_to_int, int_to_roman
 from errors import CompilerError
 
 
-@pytest.mark.parametrize("s,expected", [
-    ("I", 1), ("III", 3), ("IV", 4), ("IX", 9),
-    ("XII", 12), ("XL", 40), ("XC", 90),
-    ("MCMXCIX", 1999), ("MMMCMXCIX", 3999),
-    ("MCDXLIV", 1444),
+@pytest.mark.parametrize("text,value", [
+    ("I", 1), ("III", 3), ("IV", 4), ("IX", 9), ("XII", 12), ("XL", 40),
+    ("XC", 90), ("MCMXCIX", 1999), ("MMMCMXCIX", 3999), ("MCDXLIV", 1444),
 ])
-def test_valid_numerals(s, expected):
-    tokens = tokenize(s)
-    assert tokens[0].value == expected
+def test_valid_numerals(text, value):
+    assert tokenize(text)[0].value == value
 
 
-@pytest.mark.parametrize("s", ["IIII", "VX", "IC", "XXXX", "VV", "LL", "IXIX", "MMMM"])
-def test_invalid_numerals(s):
-    with pytest.raises(CompilerError) as exc:
-        tokenize(s)
-    assert exc.value.phase == "lexical"
+@pytest.mark.parametrize("text", ["IIII", "VX", "IC", "XXXX", "VV", "LL", "IXIX", "MMMM"])
+def test_invalid_numerals(text):
+    with pytest.raises(CompilerError) as e:
+        tokenize(text)
+    assert e.value.phase == "lexical"
 
 
-def test_operators_and_parens():
-    tokens = tokenize("XII + ( IV * II )")
-    types = [t.type for t in tokens]
-    assert types == [
-        "ROMAN_NUM", "PLUS", "LPAREN", "ROMAN_NUM", "STAR", "ROMAN_NUM", "RPAREN", "EOF"
-    ]
+def test_token_types():
+    types = [t.type for t in tokenize("XII + ( IV * II )")]
+    assert types == ["NUM", "+", "(", "NUM", "*", "NUM", ")", "END"]
+
+
+def test_lowercase_is_accepted():
+    assert tokenize("xii")[0].lexeme == "XII"
 
 
 def test_unexpected_character():
-    with pytest.raises(CompilerError) as exc:
+    with pytest.raises(CompilerError) as e:
         tokenize("XII + 5")
-    assert exc.value.phase == "lexical"
+    assert e.value.phase == "lexical" and e.value.lexeme == "5"
 
 
 def test_round_trip_all_values():
-    for i in range(1, 4000):
-        assert roman_to_int(int_to_roman(i)) == i
+    for n in range(1, 4000):
+        assert roman_to_int(int_to_roman(n)) == n

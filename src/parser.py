@@ -1,117 +1,102 @@
+# PHASE 2: SYNTAX ANALYSIS
+# Recursive descent parser. Checks the grammar and builds the parse tree.
+#
+#   Expr   ->  Term   ( ('+' | '-') Term   )*
+#   Term   ->  Factor ( ('*' | '/') Factor )*
+#   Factor ->  '(' Expr ')'  |  NUM
 from errors import CompilerError
-from lexer import TokenType
-
-# Grammar (left-recursion-free, precedence encoded structurally):
-#   Expr   -> Term (('+' | '-') Term)*
-#   Term   -> Factor (('*' | '/') Factor)*
-#   Factor -> '(' Expr ')' | ROMAN_NUM
 
 
-class NumeralNode:
-    def __init__(self, decimal_value, original_roman, position):
-        self.decimal_value = decimal_value
-        self.original_roman = original_roman
+class NumeralNode:                       # a leaf of the tree: one number
+    def __init__(self, value, roman, position):
+        self.value = value
+        self.roman = roman
         self.position = position
-        self.val = None  # synthesized attribute, filled in during semantic analysis
-
-    def __repr__(self):
-        return f"Numeral({self.original_roman}={self.decimal_value})"
+        self.val = None                  # filled in by semantic analysis
 
 
-class BinaryOpNode:
+class BinaryOpNode:                      # an inner node: left  op  right
     def __init__(self, op, left, right, position):
         self.op = op
         self.left = left
         self.right = right
         self.position = position
-        self.val = None
-
-    def __repr__(self):
-        return f"({self.left!r} {self.op} {self.right!r})"
+        self.val = None                  # filled in by semantic analysis
 
 
 class Parser:
     def __init__(self, tokens):
         self.tokens = tokens
-        self.pos = 0
+        self.pos = 0                     # which token we are looking at
 
-    def current(self):
+    def current(self):                   # look at the current token
         return self.tokens[self.pos]
 
-    def advance(self):
-        tok = self.tokens[self.pos]
+    def advance(self):                   # use up the current token
+        token = self.tokens[self.pos]
         self.pos += 1
-        return tok
+        return token
 
-    def expect(self, type_):
-        tok = self.current()
-        if tok.type != type_:
-            raise CompilerError(
-                "syntax",
-                f"expected {type_} but found {tok.type} ('{tok.lexeme}')",
-                tok.position,
-                tok.lexeme,
-            )
+    def expect(self, type):              # the next token MUST be this type
+        token = self.current()
+        if token.type != type:
+            found = token.lexeme or "end of input"
+            raise CompilerError("syntax", f"expected '{type}' but found '{found}'", token.position, token.lexeme)
         return self.advance()
 
     def parse(self):
-        node = self.parse_expr()
-        self.expect(TokenType.EOF)  # ensures no trailing garbage, e.g. "XII IV"
-        return node
+        tree = self.parse_expr()
+        token = self.current()
+        if token.type != "END":          # something is left over, e.g. "XII IV"
+            raise CompilerError("syntax", f"unexpected '{token.lexeme}' after the expression", token.position, token.lexeme)
+        return tree
 
-    def parse_expr(self):
+    def parse_expr(self):                # Expr -> Term (('+' | '-') Term)*
         node = self.parse_term()
-        while self.current().type in (TokenType.PLUS, TokenType.MINUS):
-            op_tok = self.advance()
+        while self.current().type in ("+", "-"):
+            op = self.advance()
             right = self.parse_term()
-            node = BinaryOpNode(op_tok.lexeme, node, right, op_tok.position)
+            node = BinaryOpNode(op.lexeme, node, right, op.position)
         return node
 
-    def parse_term(self):
+    def parse_term(self):                # Term -> Factor (('*' | '/') Factor)*
         node = self.parse_factor()
-        while self.current().type in (TokenType.STAR, TokenType.SLASH):
-            op_tok = self.advance()
+        while self.current().type in ("*", "/"):
+            op = self.advance()
             right = self.parse_factor()
-            node = BinaryOpNode(op_tok.lexeme, node, right, op_tok.position)
+            node = BinaryOpNode(op.lexeme, node, right, op.position)
         return node
 
-    def parse_factor(self):
-        tok = self.current()
+    def parse_factor(self):              # Factor -> '(' Expr ')' | NUM
+        token = self.current()
 
-        if tok.type == TokenType.LPAREN:
+        if token.type == "(":
             self.advance()
             node = self.parse_expr()
-            self.expect(TokenType.RPAREN)
+            self.expect(")")
             return node
 
-        if tok.type == TokenType.ROMAN_NUM:
+        if token.type == "NUM":
             self.advance()
-            return NumeralNode(tok.value, tok.lexeme, tok.position)
+            return NumeralNode(token.value, token.lexeme, token.position)
 
-        raise CompilerError(
-            "syntax",
-            f"expected a Roman numeral or '(' but found {tok.type} ('{tok.lexeme}')",
-            tok.position,
-            tok.lexeme,
-        )
+        found = token.lexeme or "end of input"
+        raise CompilerError("syntax", f"expected a number or '(' but found '{found}'", token.position, token.lexeme)
 
 
 def tree_to_str(node):
-    """Fully parenthesized infix form, e.g. '(XII + (IV * II))'."""
+    """The tree on one line, e.g. (XII + (IV * II))"""
     if isinstance(node, NumeralNode):
-        return node.original_roman
+        return node.roman
     return f"({tree_to_str(node.left)} {node.op} {tree_to_str(node.right)})"
 
 
-def tree_to_dict(node):
-    """JSON-friendly tree for a frontend parse-tree viewer."""
+def tree_lines(node, show_val=False, indent=0):
+    """The tree as indented lines, one node per line (optionally with its value)."""
+    pad = "    " * indent
+    tail = f"    (val = {node.val})" if show_val else ""
     if isinstance(node, NumeralNode):
-        return {"type": "Numeral", "roman": node.original_roman,
-                "value": node.decimal_value, "val": node.val}
-    return {
-        "type": "BinaryOp",
-        "op": node.op,
-        "val": node.val,   # synthesized attribute (None until semantic analysis runs)
-        "left": tree_to_dict(node.left),
-        "right": tree_to_dict(node.right),
-    }
+        return [f"{pad}{node.roman}{tail}"]
+    return ([f"{pad}{node.op}{tail}"]
+            + tree_lines(node.left, show_val, indent + 1)
+            + tree_lines(node.right, show_val, indent + 1))
