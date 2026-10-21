@@ -1,0 +1,3 @@
+PUSH 20
+POP EAX
+HLT
