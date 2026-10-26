@@ -29,11 +29,14 @@ def error_for(text):
     ("X + V)", "without a matching"),
     ("X /", "number"),
     ("X / (II - II)", "zero"),
+    ("II - X", "negative"),
+    ("MMMCMXCIX * MMMCMXCIX", "65535"),
 ])
 def test_error_explanations(text, must_contain):
     stages = error_for(text)
-    assert stages[-1][0] == "AI EXPLANATION (built-in rules)"
-    assert must_contain in stages[-1][2][0]
+    explanation = [s for s in stages if s[0].startswith("AI EXPLANATION")][0]
+    assert explanation[0] == "AI EXPLANATION (built-in rules)"
+    assert must_contain in explanation[2][0]
 
 
 def test_explain_error_returns_text_and_source():

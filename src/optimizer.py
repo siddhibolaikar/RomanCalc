@@ -1,43 +1,63 @@
-# PHASE 5: CODE OPTIMIZATION (constant folding)
-# If both numbers of an operation are already known, do the sum now
-# (at compile time) instead of leaving it for the machine.
+# PHASE 5: CODE OPTIMIZATION
+# 1. Constant folding: if both numbers of an operation are known, do the sum
+#    now (at compile time). These eight lines ...
 #
-#   PUSH 4
-#   PUSH 2
-#   POP EBX
-#   POP EAX        --->   PUSH 8
-#   MUL EAX, EBX
-#   PUSH EAX
+#        LXI H, 0004H          (4)
+#        PUSH H
+#        LXI H, 0002H          (2)
+#        PUSH H
+#        POP D
+#        POP H
+#        CALL MUL16
+#        PUSH H
+#
+#    ... become two:  LXI H, 0008H  and  PUSH H
+# 2. PUSH H followed straight away by POP H does nothing, so both are removed.
+# 3. A subroutine that is no longer called is removed.
+from codegen import LIBRARY, hex16
 from semantic import calculate
 
-OPERATORS = {"ADD": "+", "SUB": "-", "MUL": "*", "DIV": "/"}
+OPERATORS = {"CALL ADD16": "+", "CALL SUB16": "-", "CALL MUL16": "*", "CALL DIV16": "/"}
 
 
-def is_number_push(line):
-    parts = line.split()                          # e.g. ["PUSH", "12"]
-    return len(parts) == 2 and parts[0] == "PUSH" and parts[1].lstrip("-").isdigit()
+def is_load(line):
+    return line.startswith("LXI H, ")
 
 
-def can_fold(six):
-    return (is_number_push(six[0])                # PUSH a
-            and is_number_push(six[1])            # PUSH b
-            and six[2] == "POP EBX"
-            and six[3] == "POP EAX"
-            and six[4].split()[0] in OPERATORS    # ADD / SUB / MUL / DIV
-            and six[5] == "PUSH EAX")
+def number_in(line):
+    return int(line[7:-1], 16)                    # "LXI H, 000CH" -> 12
+
+
+def can_fold(eight):
+    return (is_load(eight[0]) and eight[1] == "PUSH H"
+            and is_load(eight[2]) and eight[3] == "PUSH H"
+            and eight[4] == "POP D" and eight[5] == "POP H"
+            and eight[6] in OPERATORS
+            and eight[7] == "PUSH H")
 
 
 def optimize(asm):
     out = []
-    folds = []
+    notes = []
     for line in asm:
         out.append(line)
-        if len(out) >= 6 and can_fold(out[-6:]):          # do the last 6 lines form a fold?
-            six = out[-6:]
-            a = int(six[0].split()[1])
-            b = int(six[1].split()[1])
-            result = calculate(OPERATORS[six[4].split()[0]], a, b)
-            folds.append(f"PUSH {a}, PUSH {b}, {six[4].split()[0]}   ->   PUSH {result}")
-            del out[-6:]
-            out.append(f"PUSH {result}")           # the new PUSH can fold again later
-    return out, folds
+
+        if len(out) >= 8 and can_fold(out[-8:]):              # rule 1: constant folding
+            a = number_in(out[-8])
+            b = number_in(out[-6])
+            op = OPERATORS[out[-2]]
+            result = calculate(op, a, b)
+            notes.append(f"{a} {op} {b} = {result}   ->   LXI H, {hex16(result)}")
+            del out[-8:]
+            out += ["LXI H, " + hex16(result), "PUSH H"]      # the new number can fold again later
+
+        if out[-2:] == ["PUSH H", "POP H"]:                   # rule 2: this pair does nothing
+            notes.append("PUSH H followed by POP H does nothing: removed")
+            del out[-2:]
+
+    for name, routine in LIBRARY.items():                     # rule 3: remove unused subroutines
+        if routine[0] in out and "CALL " + name not in out:
+            start = out.index(routine[0])
+            del out[start:start + len(routine)]
+            notes.append(f"subroutine {name} is never called: removed")
+    return out, notes

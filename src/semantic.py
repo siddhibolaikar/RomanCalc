@@ -1,6 +1,7 @@
 # PHASE 3: SEMANTIC ANALYSIS (syntax-directed translation)
 # Works out a value (val) for every node of the tree, bottom-up,
-# and checks things that depend on meaning, such as division by zero.
+# and checks things that depend on meaning: division by zero, and that every
+# value fits in 16 bits (the size of the 8085 register pair that holds it).
 from errors import CompilerError
 from parser import NumeralNode
 
@@ -28,4 +29,7 @@ def analyze(node):
         raise CompilerError("semantic", "division by zero", node.position, f"{left} / {right}")
 
     node.val = calculate(node.op, left, right)   # then this node
+
+    if not 0 <= node.val <= 65535:               # the 8085 register pair HL holds 0 to 65535
+        raise CompilerError("semantic", f"result {node.val} does not fit in 16 bits (0 to 65535)", node.position, str(node.val))
     return node.val

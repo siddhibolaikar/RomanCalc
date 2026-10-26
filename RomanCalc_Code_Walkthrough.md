@@ -13,7 +13,7 @@ files (comments inside the code are kept, docstrings removed), and every output 
 6. Phase 3, Semantic analysis (`semantic.py`)
 7. Phase 4, Code generation (`codegen.py`), the assembly language
 8. Phase 5, Code optimization (`optimizer.py`)
-9. `main.py` (the terminal driver), the AI explainer, the backup UI
+9. `main.py` (the terminal driver), the AI helpers (explainer and verified fix), the backup UI
 10. How to present it to sir
 11. Questions sir may ask, with answers
 12. One-page cheat sheet
@@ -23,7 +23,7 @@ files (comments inside the code are kept, docstrings removed), and every output 
 ## 1. The big picture
 
 A compiler turns text a human writes into a program a machine can follow, in small steps (phases).
-Each phase takes the output of the previous one. **RomanCalc takes a Roman numeral expression and produces assembly language.**
+Each phase takes the output of the previous one. **RomanCalc takes a Roman numeral expression and produces 8085 assembly language.**
 
 ```
 "XII + IV * II"
@@ -36,19 +36,19 @@ Each phase takes the output of the previous one. **RomanCalc takes a Roman numer
       |  Phase 3  SEMANTIC ANALYSIS    works out the value of every node         semantic.py
       v
  tree with values
-      |  Phase 4  CODE GENERATION      writes assembly language                  codegen.py
+      |  Phase 4  CODE GENERATION      writes 8085 assembly language             codegen.py
       v
- assembly (13 lines)
+ 8085 assembly (31 lines for the example)
       |  Phase 5  CODE OPTIMIZATION    does the constant sums at compile time    optimizer.py
       v
- shorter assembly (3 lines)  =  THE FINAL OUTPUT  (printed, and saved to output.asm)
+ shorter 8085 assembly (3 lines)  =  THE FINAL OUTPUT  (printed, and saved to output.asm)
 ```
 
 In one line each:
 - **Lexical analysis** is like reading words: it splits the text into tokens and checks each Roman numeral is spelled correctly.
 - **Syntax analysis** is like checking the grammar of a sentence: is `XII +` a complete expression? It also decides what is grouped with what, which is precedence.
 - **Semantic analysis** is about meaning: it works out values and catches things like division by zero.
-- **Code generation** writes the instructions (assembly) a machine can follow.
+- **Code generation** writes 8085 assembly language, the instructions a microprocessor follows.
 - **Code optimization** makes those instructions shorter without changing the answer.
 
 There is no virtual machine: the compiler's job ends with the assembly program.
@@ -61,10 +61,10 @@ There is no virtual machine: the compiler's job ends with the assembly program.
 | `lexer.py` | Phase 1, plus the Roman numeral conversion helpers |
 | `parser.py` | Phase 2, plus the tree node classes |
 | `semantic.py` | Phase 3 |
-| `codegen.py` | Phase 4 |
+| `codegen.py` | Phase 4 (8085 assembly) |
 | `optimizer.py` | Phase 5 |
 | `main.py` | Runs the phases in order and prints each one's output in the terminal |
-| `ai_advisor.py` | The AI error explainer (not part of the compiler) |
+| `ai_advisor.py` | The AI helpers: error explainer and fix suggester (not part of the compiler) |
 | `ui.py` | A very small web page showing the same output (backup) |
 
 ---
@@ -112,34 +112,55 @@ The multiplication sits inside the addition. That is how precedence shows up in 
 ```
 The values are worked out from the bottom up: IV and II are known, then `*` gives 8, then `+` gives 20.
 
-**Phase 4, Code generation, output = assembly (13 lines)**
+**Phase 4, Code generation, output = 8085 assembly (31 lines, including the two subroutines it calls)**
 ```
-PUSH 12
-PUSH 4
-PUSH 2
-POP EBX
-POP EAX
-MUL EAX, EBX
-PUSH EAX
-POP EBX
-POP EAX
-ADD EAX, EBX
-PUSH EAX
-POP EAX
+LXI SP, 0FFFFH
+LXI H, 000CH
+PUSH H
+LXI H, 0004H
+PUSH H
+LXI H, 0002H
+PUSH H
+POP D
+POP H
+CALL MUL16
+PUSH H
+POP D
+POP H
+CALL ADD16
+PUSH H
+POP H
 HLT
+ADD16:
+DAD D          ; HL = HL + DE
+RET
+MUL16:
+MOV B, H       ; BC = the left number
+MOV C, L
+LXI H, 0000H   ; HL = 0, the running total
+MULLP:
+MOV A, D       ; DE counts how many times to add
+ORA E          ; DE = 0 ?
+RZ             ; yes: finished
+DAD B          ; HL = HL + BC
+DCX D          ; DE = DE - 1
+JMP MULLP
 ```
 
-**Phase 5, Code optimization, output = shorter assembly (3 lines)**
+**Phase 5, Code optimization, output = the folds and clean-ups it did, then 3 lines left**
 ```
-PUSH 4, PUSH 2, MUL   ->   PUSH 8
-PUSH 12, PUSH 8, ADD   ->   PUSH 20
-13 lines of assembly  ->  3 lines
+4 * 2 = 8   ->   LXI H, 0008H
+12 + 8 = 20   ->   LXI H, 0014H
+PUSH H followed by POP H does nothing: removed
+subroutine ADD16 is never called: removed
+subroutine MUL16 is never called: removed
+31 lines of assembly  ->  3 lines
 ```
 
-**Final output = the assembly program** (the answer, 20, is left in register EAX)
+**Final output = the 8085 assembly program** (the answer is left in register pair HL: `0014H` is 20 in hexadecimal)
 ```
-PUSH 20
-POP EAX
+LXI SP, 0FFFFH
+LXI H, 0014H
 HLT
 ```
 
@@ -149,7 +170,7 @@ lexical error: 'IIII' is not a correctly written Roman numeral (position 0)
 syntax error: expected a number or '(' but found 'end of input' (position 5)
 semantic error: division by zero (position 2)
 ```
-Each phase can only fail on its own kind of problem: bad numeral spelling in Phase 1, a broken sentence in Phase 2, bad meaning (division by zero) in Phase 3. After an error, the pipeline stops, and the AI explainer says in plain English what went wrong.
+Each phase can only fail on its own kind of problem: bad numeral spelling in Phase 1, a broken sentence in Phase 2, bad meaning (division by zero) in Phase 3. After an error, the pipeline stops. The AI then explains in plain English what went wrong and proposes a corrected input, which the compiler checks by recompiling it.
 
 ---
 
@@ -533,6 +554,7 @@ This is **recursive descent**: each grammar rule is a function, and the function
 | `E1 - E2` | `val = E1.val - E2.val` |
 | `E1 * E2` | `val = E1.val * E2.val` |
 | `E1 / E2` | `val = E1.val // E2.val`, and **error if E2.val = 0** |
+| any node | **error if val is not between 0 and 65535** (it must fit in 16 bits) |
 
 ```python
 # semantic.py
@@ -559,6 +581,9 @@ def analyze(node):
         raise CompilerError("semantic", "division by zero", node.position, f"{left} / {right}")
 
     node.val = calculate(node.op, left, right)   # then this node
+
+    if not 0 <= node.val <= 65535:               # the 8085 register pair HL holds 0 to 65535
+        raise CompilerError("semantic", f"result {node.val} does not fit in 16 bits (0 to 65535)", node.position, str(node.val))
     return node.val
 ```
 
@@ -567,67 +592,174 @@ Line by line:
 - In `analyze`, a number's `val` is just its value.
 - For an operator node, it first calls `analyze` on the **left child and the right child**. The recursion goes down to the leaves first. Children first, parent last, is **post-order** (bottom-up).
 - Then, if the operator is `/` and the right value is 0, it raises a semantic error.
-- Finally `node.val = calculate(...)` stores the answer on the node, and `return` hands it to the parent.
+- `node.val = calculate(...)` stores the answer on the node.
+- Then it checks the value is between 0 and 65535. The 8085 program keeps every number in a 16-bit register pair, so a number outside that range could not be stored. A negative result such as `II - X`, or a huge one such as `MMMCMXCIX * MMMCMXCIX`, is a semantic error.
+- Finally `return` hands the value to the parent.
 
 **Why division by zero is checked here and not in the parser:** the parser only sees the shape of the expression. For `X / (II - II)` the shape is perfectly valid. Only after working out `II - II = 0` do we know there is a problem. Syntax is about structure; semantics is about meaning.
 
-**Phase 3 summary:** tree in, tree with values out. It catches division by zero.
+**Phase 3 summary:** tree in, tree with values out. It catches division by zero and numbers that do not fit in 16 bits.
 
 ---
 
-## 7. Phase 4, Code generation (`codegen.py`)
+## 7. Phase 4, Code generation (`codegen.py`), the 8085 assembly
 
-**Job:** translate the tree into **assembly language**, the language closest to the machine.
+**Job:** translate the tree into **8085 assembly language**.
 
-The target is a simple **stack machine** with two **registers** (`EAX` and `EBX`, tiny storage cells inside the processor). The whole assembly language we use is these lines:
+### 7.1 A very short 8085 primer
+- The 8085 is an 8-bit microprocessor. It has 8-bit registers `A, B, C, D, E, H, L`.
+- Two registers can be used together as a 16-bit **register pair**: `B` means the pair BC, `D` means DE, and `H` means HL. We keep every number in a register pair, so it can be 0 to 65535 (all Roman numerals up to 3999 fit).
+- It has a **stack** in memory, used with `PUSH` and `POP`, and a stack pointer `SP`.
+- It can **add and subtract** but has **no multiply or divide instruction**. So we write those as small subroutines (section 7.3).
+- Numbers in 8085 programs are written in **hexadecimal** with an `H` at the end: `000CH` is 12, `0014H` is 20. A hexadecimal number that starts with a letter gets a `0` in front (`0FFF8H`).
+
+The lines our compiler writes:
 
 | Assembly line | What it does |
 |---|---|
-| `PUSH n` | put the number n on top of the stack |
-| `POP EBX` / `POP EAX` | take the top of the stack and put it in that register |
-| `ADD EAX, EBX` | EAX = EAX + EBX (likewise `SUB`, `MUL`, `DIV`) |
-| `PUSH EAX` | put the register's value on the stack |
-| `HLT` | stop |
+| `LXI SP, 0FFFFH` | set the stack pointer to the top of memory (first line of every program) |
+| `LXI H, 000CH` | load the pair HL with the number 12 |
+| `PUSH H` | put HL on the stack |
+| `POP D` / `POP H` | take the top of the stack into DE / into HL |
+| `CALL ADD16` | call the subroutine that does HL = HL + DE (likewise `SUB16`, `MUL16`, `DIV16`) |
+| `HLT` | stop. The answer is in HL |
 
-To do `4 * 2` the machine needs: `PUSH 4`, `PUSH 2` (get both numbers on the stack), then `POP EBX` (the right number), `POP EAX` (the left number), `MUL EAX, EBX` (multiply), `PUSH EAX` (keep the result on the stack). Notice the numbers come **before** their operator. That order is called **postfix**, and a post-order walk of the tree produces it directly.
+To work out `4 * 2` the program does:
+```
+LXI H, 0004H     HL = 4
+PUSH H           put 4 on the stack
+LXI H, 0002H     HL = 2
+PUSH H           put 2 on the stack
+POP D            DE = 2  (the right number)
+POP H            HL = 4  (the left number)
+CALL MUL16       HL = HL * DE = 8
+PUSH H           put the result on the stack
+```
+Notice both numbers are pushed **before** their operator. That order is called **postfix**, and a post-order walk of the tree produces it directly.
 
+### 7.2 The code generator
 ```python
 # codegen.py
-MNEMONIC = {"+": "ADD", "-": "SUB", "*": "MUL", "/": "DIV"}
+ROUTINE = {"+": "ADD16", "-": "SUB16", "*": "MUL16", "/": "DIV16"}
+```
+```python
+# codegen.py
+def hex16(n):
+    text = f"{n:04X}H"
+    return "0" + text if text[0] in "ABCDEF" else text
 ```
 ```python
 # codegen.py
 def generate_code(tree):
-    return gen(tree) + ["POP EAX", "HLT"]       # the final answer is left in EAX
+    program = ["LXI SP, 0FFFFH"]                  # the stack starts at the top of memory
+    program += gen(tree)
+    program += ["POP H", "HLT"]                   # the final answer is left in HL
+    for name, routine in LIBRARY.items():         # add the subroutines the program calls
+        if "CALL " + name in program:
+            program += routine
+    return program
 ```
 ```python
 # codegen.py
 def gen(node):
     if isinstance(node, NumeralNode):
-        return [f"PUSH {node.value}"]
+        return ["LXI H, " + hex16(node.value), "PUSH H"]
 
-    return (gen(node.left)                      # code for the left side
-            + gen(node.right)                   # code for the right side
-            + ["POP EBX",                       # right operand
-               "POP EAX",                       # left operand
-               f"{MNEMONIC[node.op]} EAX, EBX", # EAX = EAX op EBX
-               "PUSH EAX"])                     # keep the result on the stack
+    return (gen(node.left)                        # code for the left side
+            + gen(node.right)                     # code for the right side
+            + ["POP D",                           # right number into DE
+               "POP H",                           # left number into HL
+               "CALL " + ROUTINE[node.op],        # HL = HL op DE
+               "PUSH H"])                         # keep the result on the stack
 ```
 
 Line by line:
-- `MNEMONIC` maps each operator to its assembly name.
-- `gen(node)` returns the list of assembly lines for one node:
-  - For a **number**: just `["PUSH value"]`.
-  - For an **operator**: the lines for the left side, plus the lines for the right side, plus the four lines that do the operation (`POP EBX`, `POP EAX`, the operator line, `PUSH EAX`). Left, right, then operator: that is post-order.
-- `generate_code` adds `POP EAX` (the final answer ends up in EAX) and `HLT` at the end.
+- `ROUTINE` maps each operator to the name of its subroutine.
+- `hex16(n)` writes a number the way an 8085 program does: `f"{n:04X}H"` gives four hexadecimal digits and an `H`, and a `0` is put in front if the first character is a letter.
+- `gen(node)` returns the assembly lines for one node:
+  - For a **number**: `LXI H, <number>` and `PUSH H`.
+  - For an **operator**: the lines for the left side, plus the lines for the right side, plus four lines that do the operation (`POP D`, `POP H`, `CALL <subroutine>`, `PUSH H`). Left, right, then operator: that is post-order.
+- `generate_code` starts with `LXI SP, 0FFFFH`, adds the lines from `gen`, then `POP H` (the final answer goes into HL) and `HLT`. At the end it appends the subroutines the program actually calls.
 
 **Why precedence comes out right:** the tree already has `IV * II` below the `+`, and `gen` writes the children's code before the parent's, so the multiplication code appears before the addition code. No extra logic is needed.
 
 **There is no separate intermediate-code phase.** Assembly is written straight from the tree, because a post-order walk of the tree already gives the order the machine needs.
 
-**About this assembly:** it is a simplified, x86-style teaching assembly. The stack (`PUSH`/`POP`) and the registers `EAX`/`EBX` are the same ideas as real x86, but `MUL EAX, EBX` and `DIV EAX, EBX` are written with two operands to keep it simple (real x86 has `IMUL`, and `IDIV` needs extra setup). The compiler writes the program; it does not assemble or run it.
+### 7.3 The subroutines: how the 8085 adds, subtracts, multiplies and divides
 
-**Phase 4 summary:** tree in, assembly out.
+Each subroutine takes the left number in **HL** and the right number in **DE** and leaves the answer in **HL**.
+
+```python
+# codegen.py
+LIBRARY = {
+    "ADD16": [
+        "ADD16:",
+        "DAD D          ; HL = HL + DE",
+        "RET",
+    ],
+    "SUB16": [
+        "SUB16:",
+        "MOV A, L       ; low bytes:  L - E",
+        "SUB E",
+        "MOV L, A",
+        "MOV A, H       ; high bytes: H - D - borrow",
+        "SBB D",
+        "MOV H, A",
+        "RET",
+    ],
+    "MUL16": [
+        "MUL16:",
+        "MOV B, H       ; BC = the left number",
+        "MOV C, L",
+        "LXI H, 0000H   ; HL = 0, the running total",
+        "MULLP:",
+        "MOV A, D       ; DE counts how many times to add",
+        "ORA E          ; DE = 0 ?",
+        "RZ             ; yes: finished",
+        "DAD B          ; HL = HL + BC",
+        "DCX D          ; DE = DE - 1",
+        "JMP MULLP",
+    ],
+    "DIV16": [
+        "DIV16:",
+        "LXI B, 0000H   ; BC = quotient, starts at 0",
+        "DIVLP:",
+        "MOV A, L       ; is HL - DE negative?",
+        "SUB E",
+        "MOV A, H",
+        "SBB D",
+        "JC DIVEND      ; yes: finished",
+        "MOV A, L       ; no: HL = HL - DE",
+        "SUB E",
+        "MOV L, A",
+        "MOV A, H",
+        "SBB D",
+        "MOV H, A",
+        "INX B          ; quotient = quotient + 1",
+        "JMP DIVLP",
+        "DIVEND:",
+        "MOV H, B       ; HL = quotient",
+        "MOV L, C",
+        "RET",
+    ],
+}
+```
+
+- **`ADD16`**: `DAD D` is an 8085 instruction that adds the pair DE to HL. One line.
+- **`SUB16`**: the 8085 subtracts one byte at a time. First the low bytes (`SUB E`), then the high bytes **with the borrow** (`SBB D`). `MOV` moves a value between registers.
+- **`MUL16`** (repeated addition): copy the left number into BC, set HL to 0, then add BC to HL `DE` times. At the top of the loop, `MOV A, D` and `ORA E` put D OR E in the accumulator, which is zero only if DE is zero. `RZ` returns when it is zero (finished). Otherwise `DAD B` adds BC to HL, `DCX D` counts DE down, and `JMP MULLP` repeats. For `4 * 2`: HL = 4, then 8, then DE reaches 0 and the routine returns with HL = 8.
+- **`DIV16`** (repeated subtraction): BC counts the quotient. Each time, check whether HL - DE would go below zero (`SUB E` then `SBB D` set the carry flag when HL is smaller than DE). If so, `JC DIVEND` jumps out. If not, subtract DE from HL for real and add 1 to the count (`INX B`). At the end, the count in BC is moved into HL. For `10 / 5`: 10 becomes 5, then 0, with the count reaching 2.
+
+Only the subroutines that the program calls are added at the end of the program.
+
+### 7.4 How do we know it is correct?
+The tests contain a tiny 8085 simulator (`tests/sim8085.py`). For many expressions, including large numbers, the test runs the **whole generated 8085 program** (subroutines included) on it and checks that HL ends up equal to the value Phase 3 computed. This simulator is only for testing; it is not part of the compiler. Before the exam it is also worth pasting `output.asm` into your lab's 8085 simulator.
+
+### 7.5 Limits
+- All numbers and results must be between 0 and 65535 (checked in Phase 3).
+- Division is whole-number division, and the numbers are never negative.
+
+**Phase 4 summary:** tree in, 8085 assembly out.
 
 ---
 
@@ -635,87 +767,110 @@ Line by line:
 
 **Job:** make the assembly shorter without changing what it computes.
 
-**The optimization is constant folding:** if both numbers of an operation are already known, do the sum now (at compile time) instead of leaving it for the machine. In our assembly, these six lines always mean "compute a op b":
+There are three small rules:
 
+1. **Constant folding (the main one).** If both numbers of an operation are already known, do the sum now (at compile time) instead of leaving it for the processor. These eight lines always mean "compute a op b":
 ```
-PUSH a
-PUSH b
-POP EBX
-POP EAX
-<ADD|SUB|MUL|DIV> EAX, EBX
-PUSH EAX
+LXI H, a
+PUSH H
+LXI H, b
+PUSH H
+POP D
+POP H
+CALL <ADD16|SUB16|MUL16|DIV16>
+PUSH H
 ```
-so they can be replaced by the single line `PUSH (a op b)`.
+so they are replaced by two lines: `LXI H, <a op b>` and `PUSH H`.
+2. **`PUSH H` straight followed by `POP H` does nothing**, so both lines are removed.
+3. **A subroutine that is never called any more is removed.**
 
 ```python
 # optimizer.py
-OPERATORS = {"ADD": "+", "SUB": "-", "MUL": "*", "DIV": "/"}
+OPERATORS = {"CALL ADD16": "+", "CALL SUB16": "-", "CALL MUL16": "*", "CALL DIV16": "/"}
 ```
 ```python
 # optimizer.py
-def is_number_push(line):
-    parts = line.split()                          # e.g. ["PUSH", "12"]
-    return len(parts) == 2 and parts[0] == "PUSH" and parts[1].lstrip("-").isdigit()
+def is_load(line):
+    return line.startswith("LXI H, ")
 ```
 ```python
 # optimizer.py
-def can_fold(six):
-    return (is_number_push(six[0])                # PUSH a
-            and is_number_push(six[1])            # PUSH b
-            and six[2] == "POP EBX"
-            and six[3] == "POP EAX"
-            and six[4].split()[0] in OPERATORS    # ADD / SUB / MUL / DIV
-            and six[5] == "PUSH EAX")
+def number_in(line):
+    return int(line[7:-1], 16)                    # "LXI H, 000CH" -> 12
+```
+```python
+# optimizer.py
+def can_fold(eight):
+    return (is_load(eight[0]) and eight[1] == "PUSH H"
+            and is_load(eight[2]) and eight[3] == "PUSH H"
+            and eight[4] == "POP D" and eight[5] == "POP H"
+            and eight[6] in OPERATORS
+            and eight[7] == "PUSH H")
 ```
 ```python
 # optimizer.py
 def optimize(asm):
     out = []
-    folds = []
+    notes = []
     for line in asm:
         out.append(line)
-        if len(out) >= 6 and can_fold(out[-6:]):          # do the last 6 lines form a fold?
-            six = out[-6:]
-            a = int(six[0].split()[1])
-            b = int(six[1].split()[1])
-            result = calculate(OPERATORS[six[4].split()[0]], a, b)
-            folds.append(f"PUSH {a}, PUSH {b}, {six[4].split()[0]}   ->   PUSH {result}")
-            del out[-6:]
-            out.append(f"PUSH {result}")           # the new PUSH can fold again later
-    return out, folds
+
+        if len(out) >= 8 and can_fold(out[-8:]):              # rule 1: constant folding
+            a = number_in(out[-8])
+            b = number_in(out[-6])
+            op = OPERATORS[out[-2]]
+            result = calculate(op, a, b)
+            notes.append(f"{a} {op} {b} = {result}   ->   LXI H, {hex16(result)}")
+            del out[-8:]
+            out += ["LXI H, " + hex16(result), "PUSH H"]      # the new number can fold again later
+
+        if out[-2:] == ["PUSH H", "POP H"]:                   # rule 2: this pair does nothing
+            notes.append("PUSH H followed by POP H does nothing: removed")
+            del out[-2:]
+
+    for name, routine in LIBRARY.items():                     # rule 3: remove unused subroutines
+        if routine[0] in out and "CALL " + name not in out:
+            start = out.index(routine[0])
+            del out[start:start + len(routine)]
+            notes.append(f"subroutine {name} is never called: removed")
+    return out, notes
 ```
 
 Line by line:
-- `is_number_push(line)` is true for lines like `PUSH 12` (also `PUSH -8`) but not `PUSH EAX`, because the second word must be a number.
-- `can_fold(six)` checks that six lines have exactly the pattern above: two `PUSH number` lines, `POP EBX`, `POP EAX`, an arithmetic line, and `PUSH EAX`.
-- In `optimize`, `out` is the new, shorter program and `folds` records each fold.
-- It copies the lines one by one. After each line is added, it asks: do the **last six lines** of `out` form a fold?
-- If yes: read `a` and `b` from the two `PUSH` lines, find the operator from the arithmetic line, work out `result` with `calculate` (the same function Phase 3 uses), delete the six lines, and add `PUSH result` in their place.
+- `is_load(line)` is true for lines that start with `LXI H, `. (`LXI SP, ...` does not match.)
+- `number_in(line)` reads the number back out of such a line: `LXI H, 000CH` gives 12 (the text between the first 7 characters and the final `H` is read as hexadecimal).
+- `can_fold(eight)` checks that eight lines have exactly the pattern in rule 1.
+- In `optimize`, `out` is the new, shorter program and `notes` records what was done.
+- It copies the lines one by one. After each line is added, it asks: do the **last eight lines** of `out` form a fold? If yes: read `a` and `b`, find the operator from the `CALL` line, work out `result` with `calculate` (the same function Phase 3 uses), delete the eight lines, and add `LXI H, <result>` and `PUSH H` in their place.
+- Then, if the last two lines are `PUSH H`, `POP H`, both are removed (rule 2).
+- At the end, for each subroutine in `LIBRARY`: if its label is in the program but no `CALL` to it remains, the subroutine's lines are deleted (rule 3).
 
-**Why one pass is enough:** the new `PUSH result` is a number push, so it can combine with the next lines that arrive. For our example:
+**Why one pass is enough:** the new `LXI H, result` / `PUSH H` can combine with the lines that arrive next. For our example:
 ```
-PUSH 12, PUSH 4, PUSH 2, POP EBX, POP EAX, MUL, PUSH EAX      ... the last six fold: 4 * 2
-   becomes   PUSH 12, PUSH 8                                  (so far)
-then POP EBX, POP EAX, ADD, PUSH EAX are added                ... the last six fold: 12 + 8
-   becomes   PUSH 20
+... LXI H, 4 / PUSH H / LXI H, 2 / PUSH H / POP D / POP H / CALL MUL16 / PUSH H     <- the last eight lines fold: 4 * 2 = 8
+    becomes   LXI H, 8 / PUSH H          (and the 12 that was pushed before it is still on the stack)
+then POP D / POP H / CALL ADD16 / PUSH H arrive                                      <- the last eight lines fold: 12 + 8 = 20
+    becomes   LXI H, 20 / PUSH H
+then POP H arrives: PUSH H followed by POP H is removed
+the subroutines ADD16 and MUL16 are no longer called, so they are removed
 ```
+Result: `LXI SP, 0FFFFH`, `LXI H, 0014H`, `HLT`.
 
-**Why this is safe:** a fold only replaces lines that were certain to compute `a op b` with a `PUSH` of that same number. The program's meaning does not change. The tests also check that, for many expressions, the optimized assembly is exactly `PUSH <the value Phase 3 computed>`.
+**Why this is safe:** each rule only removes lines whose effect is already known: the folded lines computed exactly `a op b`, a `PUSH H` / `POP H` pair leaves everything as it was, and an uncalled subroutine is never run. The tests check this: for many expressions the optimized program is exactly `LXI H, <the value Phase 3 computed>`, and both the unoptimized and the optimized programs give that value on the 8085 simulator.
 
-**Honest note:** every number in this language is written in the program, so every expression folds all the way down to a single `PUSH`. It is still a real optimization: `XII + IV * II` goes from 13 lines to 3.
+**Honest note:** every number in this language is written in the program, so every expression folds all the way down to one `LXI H`. It is still a real optimization: `XII + IV * II` goes from 31 lines to 3.
 
-**Phase 5 summary:** assembly in, shorter assembly out, with a list of the folds.
+**Phase 5 summary:** 8085 assembly in, shorter 8085 assembly out, with a list of what was done.
 
 ---
 
-## 9. `main.py` (the terminal driver), the AI explainer, the backup UI
+## 9. `main.py` (the terminal driver), the AI helpers (explainer and verified fix), the backup UI
 
 ### 9.1 `main.py`
 ```python
 # main.py
-def compile_source(source):
+def run_phases(source):
     stages = []
-    asm = None
     try:
         tokens = tokenize(source)
         stages.append(("PHASE 1: LEXICAL ANALYSIS",
@@ -734,31 +889,42 @@ def compile_source(source):
 
         asm = generate_code(tree)
         stages.append(("PHASE 4: CODE GENERATION",
-                       "Walks the tree and writes assembly language.",
+                       "Walks the tree and writes 8085 assembly language.",
                        asm))
 
         before = len(asm)
-        asm, folds = optimize(asm)
+        asm, notes = optimize(asm)
         stages.append(("PHASE 5: CODE OPTIMIZATION",
-                       "Constant folding: does the sums at compile time.",
-                       folds + [f"{before} lines of assembly  ->  {len(asm)} lines"]))
+                       "Constant folding (sums done at compile time) and removal of code that is no longer needed.",
+                       notes + [f"{before} lines of assembly  ->  {len(asm)} lines"]))
 
-        stages.append(("FINAL OUTPUT: ASSEMBLY PROGRAM",
-                       "Result is left in register EAX.",
+        stages.append(("FINAL OUTPUT: 8085 ASSEMBLY PROGRAM",
+                       "The result is left in register pair HL.",
                        asm))
+        return stages, asm, None
 
     except CompilerError as e:
-        where = f" (position {e.position})" if e.position is not None else ""
-        stages.append((e.phase.upper() + " ERROR", "", [e.message + where]))
-        text, who = explain_error(e, source)
+        return stages, None, e
+```
+
+- `run_phases` runs the five phases **in order**. After each phase succeeds, it adds a **stage** to the `stages` list: (title, what the phase does, output lines).
+- Everything is inside one `try`. If any phase raises a `CompilerError`, control jumps to `except`, and `run_phases` returns the stages so far, no assembly, and the error. The remaining phases are skipped, which is why an error stops the pipeline at the failing phase.
+- On success it returns the stages, the final assembly, and `None` for the error.
+
+```python
+# main.py
+def compile_source(source):
+    stages, asm, error = run_phases(source)
+    if error:
+        where = f" (position {error.position})" if error.position is not None else ""
+        stages.append((error.phase.upper() + " ERROR", "", [error.message + where]))
+        text, who = explain_error(error, source)
         stages.append((f"AI EXPLANATION ({who})", "", [text]))
-        asm = None
+        stages += fix_stages(source, error)
     return stages, asm
 ```
 
-- `compile_source` runs the phases **in order**. After each phase succeeds, it adds a **stage** to the `stages` list: (title, what the phase does, output lines).
-- Everything is inside one `try`. If any phase raises a `CompilerError`, control jumps to `except`, which adds the error and the AI explanation as stages. The remaining phases are skipped, which is why an error stops the pipeline at the failing phase.
-- It returns the stages and the final assembly (`None` if there was an error).
+- `compile_source` calls `run_phases`. If there was an error, it adds three more stages: the error, the AI explanation, and the suggested fix (section 9.2). It returns the stages and the assembly (`None` when the input had an error).
 
 ```python
 # main.py
@@ -768,7 +934,10 @@ def stage_text(stage):
     if what:
         text += what + "\n"
     text += "=" * 62 + "\n"
-    return text + "".join("  " + line + "\n" for line in lines)
+    for line in lines:
+        pad = "  " if line.endswith(":") else "    "     # labels stand out from instructions
+        text += pad + line + "\n"
+    return text
 ```
 ```python
 # main.py
@@ -795,7 +964,11 @@ python main.py --step "XII + IV * II"   pause after every stage
 python main.py                          type expressions one after another
 ```
 
-### 9.2 The AI error explainer (`ai_advisor.py`)
+### 9.2 The AI helpers (`ai_advisor.py`)
+
+When a phase finds an error, the AI does two things, and **both happen after the compiler has already found the error**.
+
+**Part 1: the error explainer**
 ```python
 # ai_advisor.py
 def explain_error(error, source):
@@ -805,11 +978,80 @@ def explain_error(error, source):
     return offline_explanation(error), "built-in rules"
 ```
 
-- It takes the error and the original input, and first tries `ask_ai`, which asks an AI model to explain the mistake in plain English and suggest a fix. That only works if an API key is set.
+- It takes the error and the original input, and first tries `ask_ai`, which asks an AI model to explain the mistake in plain English. That only works if an API key is set.
 - If there is no key or no internet, it uses `offline_explanation`, a set of fixed rules (for example, for `IIII` it says the correct form is `IV`).
 - The result says who wrote the explanation, `AI` or `built-in rules`, and `main.py` shows that in the stage title.
 
-**Important point for sir:** none of the five phases imports `ai_advisor.py` (a test checks this). The compiler works completely without it. The AI only explains an error **after** the compiler has found it; it never decides whether a program is valid.
+**Part 2: a suggested fix, verified by the compiler (AI proposes, compiler decides)**
+
+The AI proposes a corrected input. We do **not** trust it: the compiler recompiles the corrected input, and the fix is accepted only if all five phases pass.
+
+```python
+# main.py
+def fix_stages(source, error):
+    rejected = []
+    for candidate, who in suggest_fixes(error, source):
+        _, fixed_asm, fixed_error = run_phases(candidate)
+        if fixed_error is None:                                  # the compiler accepted it
+            return [(f"SUGGESTED FIX ({who})",
+                     "The compiler checked this input by running all five phases on it.",
+                     rejected + [f"{source}   ->   {candidate}"]),
+                    ("VERIFIED: ALL 5 PHASES PASSED",
+                     "8085 program for the corrected input. The result is left in register pair HL.",
+                     fixed_asm)]
+        rejected.append(f"{who} suggested '{candidate}', but the compiler rejected it: {fixed_error.message}")
+    return [("NO VERIFIED FIX", "",
+             rejected + ["No corrected input that passes all five phases was found."])]
+```
+```python
+# ai_advisor.py
+def suggest_fixes(error, source):
+    tries = [(ask_ai_for_fix(error, source), "AI"),
+             (rule_fix(error, source), "built-in rules")]
+    fixes = []
+    for candidate, who in tries:
+        if candidate and candidate != source and candidate not in [c for c, _ in fixes]:
+            fixes.append((candidate, who))
+    return fixes
+```
+```python
+# ai_advisor.py
+def rule_fix(error, source):
+    word = error.lexeme or ""
+    where = error.position
+
+    if error.phase == "lexical" and word and all(c in ROMAN_VALUES for c in word.upper()):
+        value = roman_to_int(word.upper())               # IIII -> 4 -> IV
+        if 1 <= value <= 3999:
+            return source[:where] + int_to_roman(value) + source[where + len(word):]
+
+    if error.phase == "syntax":
+        if error.message.startswith("expected ')'") and error.message.endswith("'end of input'"):
+            return source + ")" * (source.count("(") - source.count(")"))    # close the brackets
+        if "after the expression" in error.message and word == ")":
+            return source[:where] + source[where + 1:]                       # remove the extra ')'
+    return None
+```
+
+- `suggest_fixes` returns candidate corrected inputs, best first: the AI's answer (`ask_ai_for_fix`, only if an API key is set), then the built-in rule. Candidates that are the same as the input, or repeated, are dropped.
+- `fix_stages` tries each candidate by calling `run_phases(candidate)`, the same five phases that handled the original input.
+- If no phase raises an error (`fixed_error is None`), the compiler has accepted it, and the stages show the fix and the 8085 program for the corrected input.
+- If a phase rejects the candidate, the reason is recorded (`... but the compiler rejected it: ...`) and the next candidate is tried. If none passes, the output says `NO VERIFIED FIX`.
+- `rule_fix` is the fix that needs no AI. It handles only three clear mistakes: a badly written numeral is rewritten in standard form (`IIII` is read as 4, and `int_to_roman(4)` writes `IV`), a missing `)` is added, and an extra `)` is removed. For anything unclear, such as `XII +`, it gives no fix.
+
+What it looks like for `IIII + I`:
+```
+SUGGESTED FIX (built-in rules)
+    IIII + I   ->   IV + I
+VERIFIED: ALL 5 PHASES PASSED
+    LXI SP, 0FFFFH
+    LXI H, 0005H
+    HLT
+```
+
+**Two important points for sir**
+- None of the five phases imports `ai_advisor.py` (a test checks this). The compiler works completely without it, and the AI never decides whether a program is valid: the compiler does, by recompiling.
+- The compiler checks that the fixed input is a **valid program**, not that it is what the user **meant**. For example `VX - II` is fixed to `V - II`, which compiles, but the user may have meant `XV - II`.
 
 ### 9.3 The backup UI (`ui.py`)
 A tiny web page: a text box, a Compile button, and a box that shows the same text the terminal shows. It calls the same `compile_source`, so there is no second implementation. Start it with `python ui.py` and open `http://localhost:8000`. It is only a backup; the terminal is the main way to run the compiler.
@@ -823,12 +1065,13 @@ A tiny web page: a text box, a Compile button, and a box that shows the same tex
 2. `main.py`, `compile_source`: "these are the five phases in order, and each one's output feeds the next."
 3. `lexer.py`: `validate_roman` (the round trip), then `tokenize`.
 4. `parser.py`: the grammar, then `parse_expr`, `parse_term`, `parse_factor`.
-5. `semantic.py`: `analyze` (bottom-up, division by zero).
-6. `codegen.py`: `gen` (post-order, the assembly lines).
+5. `semantic.py`: `analyze` (bottom-up, division by zero, 16-bit check).
+6. `codegen.py`: `gen` (post-order), then the `LIBRARY` subroutines (this is the 8085 part).
 7. `optimizer.py`: `optimize` (constant folding).
-8. Show the three error kinds: `IIII + I`, `XII +`, `X / (II - II)`.
+8. Show the error kinds: `IIII + I` (note the suggested fix that the compiler verifies), `XII +`, `X / (II - II)`, `II - X`.
 9. Mention `output.asm` (the compiler's output file), and `python -m pytest tests -q` for the tests.
-10. Only if asked: `python ui.py` and open the web page.
+10. If he asks, paste `output.asm` (or the Phase 4 listing) into an 8085 simulator. Try this yourself once beforehand.
+11. Only if asked: `python ui.py` and open the web page.
 
 ---
 
@@ -864,43 +1107,62 @@ The expression `X / (II - II)` is grammatically correct. We only learn the divis
 **Q10. What is post-order traversal and where do you use it?**
 Visit the left child, then the right child, then the node itself. It is used twice: in semantic analysis (a node's value needs its children's values first) and in code generation (both numbers must be pushed before the operator's lines).
 
-**Q11. What is the output of your compiler, and why assembly?**
-The final output is an assembly language program. Assembly is the last step before machine code, and it is what a real compiler's code generator produces. Ours is a simplified x86-style assembly using a stack (`PUSH`/`POP`) and two registers (`EAX`, `EBX`).
+**Q11. What is the output of your compiler, and why 8085?**
+The final output is an 8085 assembly language program (saved as `output.asm`). Assembly is the last step before machine code, and it is what a real compiler's code generator produces. The 8085 is a small, classic microprocessor, so its instructions are easy to explain: registers, a stack, `LXI`, `PUSH`, `POP`, `CALL`, `HLT`.
 
 **Q12. Why is there no intermediate code generation phase?**
 It is optional. For a stack-based target, the parse tree already works as the intermediate form, since a post-order walk of it gives the instruction order. An intermediate form such as three-address code would be an extra step between the tree and the assembly.
 
 **Q13. What optimization do you do, and why is it correct?**
-Constant folding: six lines of assembly that compute `a op b` from two known numbers are replaced by `PUSH (a op b)`. It is correct because those six lines always produce exactly that value. The tests check that the optimized program is `PUSH` of the value that semantic analysis computed.
+Constant folding: eight lines of assembly that compute `a op b` from two known numbers are replaced by `LXI H, <a op b>` and `PUSH H`. It is correct because those eight lines always produce exactly that value. Two clean-ups follow: `PUSH H` then `POP H` is removed, and subroutines that are no longer called are removed. The tests check the optimized program equals `LXI H, <the value from Phase 3>`.
 
 **Q14. What other optimizations could you add?**
-Algebraic simplification (`x * 1`, `x + 0`), turning `PUSH n` followed by `POP EAX` into `MOV EAX, n`, strength reduction, common sub-expression elimination, dead code elimination. Most of those matter when programs have variables; here every operand is a constant, so folding covers everything.
+Algebraic simplification (`x * 1`, `x + 0`), strength reduction (for example multiplying by 2 with `DAD H`, which adds HL to itself), common sub-expression elimination, dead code elimination. Most matter when programs have variables; here every operand is a constant, so folding covers everything.
 
-**Q15. Does your assembly run on a real machine?**
-Not as it is. It is a simplified teaching assembly in the style of x86. The stack and the registers work the same way, but `MUL EAX, EBX` and `DIV EAX, EBX` are simplified (real x86 uses `IMUL` and `IDIV` with extra setup), and we do not model the 32-bit size of registers. The compiler's job ends at writing the assembly; an assembler would be the next tool.
+**Q15. Does your assembly really run?**
+The compiler only writes it. It uses standard 8085 instructions (`LXI`, `PUSH`, `POP`, `CALL`, `RET`, `DAD`, `MOV`, `SUB`, `SBB`, `ORA`, `RZ`, `JC`, `JMP`, `INX`, `DCX`, `HLT`). The tests run the generated programs on a small 8085 simulator written for testing, and the results match. A real 8085 simulator would be the final check, so try the output in your lab's simulator.
 
 **Q16. How do you know the generated assembly is correct?**
-Two ways. By hand: `PUSH`/`POP` follow the stack, and the 13-line program for `XII + IV * II` can be traced to 20. In the tests: for many expressions, the optimized assembly must equal `PUSH` of the value computed by Phase 3, which is computed separately from the tree.
+By hand: the stack works as push, push, pop, pop, operate, push, and the example traces to 20 (`0014H`). In the tests: for many expressions the whole generated program, including the multiply and divide subroutines, is run on the simulator and HL must equal the value Phase 3 computed from the tree.
 
 **Q17. Where is AI used?**
-Only to explain errors in plain English. It sits outside the compiler (none of the five phases imports it), and if it is unavailable, built-in rules take over. All five phases are written by hand.
+In two places, both after the compiler has found an error. The AI explains the error in plain English, and it proposes a corrected input. The compiler then runs that corrected input through all five phases, and the fix is shown only if every phase passes, so the AI proposes and the compiler decides. The AI sits outside the compiler (none of the five phases imports it), and without an API key built-in rules take over. All five phases are written by hand.
 
 **Q18. What happens when there is an error?**
 The phase raises a `CompilerError` with the phase, message and position. `main.py` stops the pipeline there, shows the error and the explanation. We stop at the first error and do no error recovery.
 
-**Q19. What is the time complexity?**
-Each phase makes one pass over its input, so it is roughly linear in the length of the input.
+**Q19. What is the time complexity of the compiler?**
+Each phase makes one pass over its input, so it is roughly linear in the length of the input. (The generated multiply and divide routines take time proportional to the numbers, because they work by repeated addition and subtraction.)
 
 **Q20. What are the limitations?**
-Whole-number arithmetic only (division is integer division), numerals 1 to 3999 only, no unary minus, no variables, and a simplified assembly that is not run or assembled.
+Whole-number arithmetic only (division is whole-number division), numerals 1 to 3999 only, every value must stay between 0 and 65535 (so no negative results), no unary minus, no variables, and the assembly is written but not assembled or run by the compiler.
 
 **Q21. How would you add a new operator, say `%` (modulo)?**
-Five small edits, one per file:
+Six small edits:
 1. `lexer.py`: add `%` to the one-character symbols in `tokenize` (`"+-*/%()"`).
 2. `parser.py`: in `parse_term`, also loop on `"%"`.
 3. `semantic.py`: in `calculate`, handle `%` (and check for zero like `/`).
-4. `codegen.py`: add `"%": "MOD"` to `MNEMONIC`.
-5. `optimizer.py`: add `"MOD": "%"` to `OPERATORS`.
+4. `codegen.py`: add `"%": "MOD16"` to `ROUTINE`, and write a `MOD16` subroutine in `LIBRARY` (like `DIV16`, but return the remainder in HL).
+5. `optimizer.py`: add `"CALL MOD16": "%"` to `OPERATORS`.
+6. Add a test.
+
+**Q22. The 8085 has no multiply instruction. How do you multiply?**
+`MUL16` multiplies by repeated addition: it adds the left number to a running total as many times as the right number says, using `DAD B` and counting `DE` down with `DCX D` until it is zero. Division (`DIV16`) is repeated subtraction: it counts how many times the right number can be taken away from the left.
+
+**Q23. Why do you use 16-bit register pairs and the stack?**
+The 8085 registers are 8 bits (0 to 255), but Roman numerals go up to 3999 and results grow, so we use the 16-bit pairs HL and DE (0 to 65535). The stack (`PUSH` / `POP`) lets us keep intermediate results while we work on the other side of an expression, which matches the tree walk exactly.
+
+**Q24. Why are negative numbers and results above 65535 errors?**
+The 16-bit register pair can only hold 0 to 65535, and Roman numerals have no negatives. Instead of letting the program silently give a wrong answer, Phase 3 reports it as a semantic error before any code is written.
+
+**Q25. How do you stop the AI from giving a wrong fix?**
+I never use its answer directly. The suggestion goes back through `run_phases`, the same five phases as any input. If any phase rejects it, it is thrown away, the reason is shown (`... but the compiler rejected it`), and the next candidate is tried. If none passes, the output says `NO VERIFIED FIX`.
+
+**Q26. Does a verified fix mean the fix is what the user meant?**
+No. It only means the corrected input is a valid program. `VX - II` becomes `V - II`, which compiles, but the user may have meant `XV - II`. That is why it is called a suggested fix, and the original input is still reported as an error.
+
+**Q27. What happens without an API key?**
+The explainer and the fix suggester use built-in rules. The rules fix three clear mistakes (a badly written numeral, a missing `)`, an extra `)`), and the compiler still verifies the result. With a key, the AI's fix is tried first.
 
 ---
 
@@ -910,11 +1172,13 @@ Five small edits, one per file:
 |---|---|---|---|---|---|---|
 | 1 | Lexical | `lexer.py`, `tokenize`, `validate_roman` | text | tokens | character scan, round-trip check | bad character, bad numeral (`IIII`, `VX`) |
 | 2 | Syntax | `parser.py`, `Parser.parse_*` | tokens | parse tree | recursive descent | missing operand, bracket or operator |
-| 3 | Semantic | `semantic.py`, `analyze` | tree | tree with `val` | S-attributed SDT, post-order | division by zero |
-| 4 | Code generation | `codegen.py`, `gen` | tree | assembly | post-order walk | none |
-| 5 | Optimization | `optimizer.py`, `optimize` | assembly | shorter assembly | constant folding | none |
+| 3 | Semantic | `semantic.py`, `analyze` | tree | tree with `val` | S-attributed SDT, post-order | division by zero, value outside 0 to 65535 |
+| 4 | Code generation | `codegen.py`, `gen`, `LIBRARY` | tree | 8085 assembly | post-order walk, subroutines | none |
+| 5 | Optimization | `optimizer.py`, `optimize` | 8085 assembly | shorter 8085 assembly | constant folding | none |
+
+**The 8085 program in one picture:** left number in HL, right number in DE, `CALL` the subroutine, answer comes back in HL, `PUSH H` keeps it on the stack. At the end `POP H`, `HLT`: the answer is in HL.
 
 **Three sentences to remember:**
 1. *Each phase takes the output of the previous one, and any phase can stop the pipeline with an error.*
 2. *Precedence comes from the grammar, the tree carries it, and post-order walks (for values and for code) respect it.*
-3. *The AI only explains errors; every compiler phase is hand-written.*
+3. *The AI explains errors and proposes fixes, but the compiler checks every fix; every compiler phase is hand-written.*

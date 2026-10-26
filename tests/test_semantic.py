@@ -14,7 +14,7 @@ def value_of(text):
 
 @pytest.mark.parametrize("text,expected", [
     ("XII + IV * II", 20), ("(XII + IV) * II", 32), ("X / II", 5),
-    ("X - V - II", 3), ("III * III * III", 27), ("II - X", -8), ("X / III", 3),
+    ("X - V - II", 3), ("III * III * III", 27), ("X - X", 0), ("X / III", 3), ("MMMCMXCIX * XVI", 63984),
 ])
 def test_values(text, expected):
     assert value_of(text) == expected
@@ -34,3 +34,10 @@ def test_division_by_zero():
 
 def test_calculate():
     assert calculate("+", 2, 3) == 5 and calculate("*", 2, 3) == 6 and calculate("/", 7, 2) == 3
+
+
+@pytest.mark.parametrize("text", ["II - X", "MMMCMXCIX * MMMCMXCIX", "MMMCMXCIX * XVII"])
+def test_value_must_fit_in_16_bits(text):
+    with pytest.raises(CompilerError) as e:
+        value_of(text)
+    assert e.value.phase == "semantic" and "16 bits" in e.value.message

@@ -11,13 +11,13 @@ from parser import Parser, tree_lines
 from semantic import analyze
 from codegen import generate_code
 from optimizer import optimize
-from ai_advisor import explain_error
+from ai_advisor import explain_error, suggest_fixes
 
 
-def compile_source(source):
-    """Runs the stages. Returns (stages, assembly). Each stage is (title, what it does, output lines)."""
+def run_phases(source):
+    """Runs the five phases. Returns (stages, assembly, error). error is None if everything worked.
+    Each stage is (title, what it does, output lines)."""
     stages = []
-    asm = None
     try:
         tokens = tokenize(source)
         stages.append(("PHASE 1: LEXICAL ANALYSIS",
@@ -36,26 +36,53 @@ def compile_source(source):
 
         asm = generate_code(tree)
         stages.append(("PHASE 4: CODE GENERATION",
-                       "Walks the tree and writes assembly language.",
+                       "Walks the tree and writes 8085 assembly language.",
                        asm))
 
         before = len(asm)
-        asm, folds = optimize(asm)
+        asm, notes = optimize(asm)
         stages.append(("PHASE 5: CODE OPTIMIZATION",
-                       "Constant folding: does the sums at compile time.",
-                       folds + [f"{before} lines of assembly  ->  {len(asm)} lines"]))
+                       "Constant folding (sums done at compile time) and removal of code that is no longer needed.",
+                       notes + [f"{before} lines of assembly  ->  {len(asm)} lines"]))
 
-        stages.append(("FINAL OUTPUT: ASSEMBLY PROGRAM",
-                       "Result is left in register EAX.",
+        stages.append(("FINAL OUTPUT: 8085 ASSEMBLY PROGRAM",
+                       "The result is left in register pair HL.",
                        asm))
+        return stages, asm, None
 
     except CompilerError as e:
-        where = f" (position {e.position})" if e.position is not None else ""
-        stages.append((e.phase.upper() + " ERROR", "", [e.message + where]))
-        text, who = explain_error(e, source)
+        return stages, None, e
+
+
+def compile_source(source):
+    """Runs the phases. If there is an error, adds the AI explanation and a verified fix.
+    Returns (stages, assembly); assembly is None when the input has an error."""
+    stages, asm, error = run_phases(source)
+    if error:
+        where = f" (position {error.position})" if error.position is not None else ""
+        stages.append((error.phase.upper() + " ERROR", "", [error.message + where]))
+        text, who = explain_error(error, source)
         stages.append((f"AI EXPLANATION ({who})", "", [text]))
-        asm = None
+        stages += fix_stages(source, error)
     return stages, asm
+
+
+def fix_stages(source, error):
+    """The AI proposes a corrected input. The compiler runs it through all five phases
+    and accepts it only if every phase passes (AI proposes, compiler decides)."""
+    rejected = []
+    for candidate, who in suggest_fixes(error, source):
+        _, fixed_asm, fixed_error = run_phases(candidate)
+        if fixed_error is None:                                  # the compiler accepted it
+            return [(f"SUGGESTED FIX ({who})",
+                     "The compiler checked this input by running all five phases on it.",
+                     rejected + [f"{source}   ->   {candidate}"]),
+                    ("VERIFIED: ALL 5 PHASES PASSED",
+                     "8085 program for the corrected input. The result is left in register pair HL.",
+                     fixed_asm)]
+        rejected.append(f"{who} suggested '{candidate}', but the compiler rejected it: {fixed_error.message}")
+    return [("NO VERIFIED FIX", "",
+             rejected + ["No corrected input that passes all five phases was found."])]
 
 
 def stage_text(stage):
@@ -64,7 +91,10 @@ def stage_text(stage):
     if what:
         text += what + "\n"
     text += "=" * 62 + "\n"
-    return text + "".join("  " + line + "\n" for line in lines)
+    for line in lines:
+        pad = "  " if line.endswith(":") else "    "     # labels stand out from instructions
+        text += pad + line + "\n"
+    return text
 
 
 def run(source, step=False):

@@ -8,8 +8,8 @@ def test_successful_compile_has_five_stages_and_the_final_output():
     stages, asm = compile_source("XII + IV * II")
     titles = [s[0] for s in stages]
     assert titles == ["PHASE 1: LEXICAL ANALYSIS", "PHASE 2: SYNTAX ANALYSIS", "PHASE 3: SEMANTIC ANALYSIS",
-                      "PHASE 4: CODE GENERATION", "PHASE 5: CODE OPTIMIZATION", "FINAL OUTPUT: ASSEMBLY PROGRAM"]
-    assert asm == ["PUSH 20", "POP EAX", "HLT"]
+                      "PHASE 4: CODE GENERATION", "PHASE 5: CODE OPTIMIZATION", "FINAL OUTPUT: 8085 ASSEMBLY PROGRAM"]
+    assert asm == ["LXI SP, 0FFFFH", "LXI H, 0014H", "HLT"]
     assert stages[-1][2] == asm
 
 
@@ -30,5 +30,5 @@ def test_lexical_error_has_only_error_stages():
 
 
 def test_stage_text_format():
-    text = stage_text(("TITLE", "what", ["line1", "line2"]))
-    assert text.startswith("=" * 62 + "\nTITLE\nwhat\n") and "  line1\n  line2\n" in text
+    text = stage_text(("TITLE", "what", ["LABEL:", "line2"]))
+    assert text.startswith("=" * 62 + "\nTITLE\nwhat\n") and "  LABEL:\n    line2\n" in text
